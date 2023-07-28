@@ -1,0 +1,239 @@
+master --->>192.168.113.160
+node1---->>>192.168.113.164
+node2--->>>192.168.113.165
+
+run all 3 machine
+vi /etc/selinux/config
+systemctl stop firewalld.service
+systemctl disable firewalld.service
+init 6
+
+on master
+
+vi /etc/hosts
+cat /etc/hosts
+192.168.113.160 pbs-master
+192.168.113.164 pbs-node1
+192.168.113.165 pbs-node2
+
+rsync /etc/hosts root@pbs-node1:/etc/hosts
+rsync /etc/hosts root@pbs-node2:/etc/hosts 
+
+on all 3 machine
+ssh-keygen
+
+on master
+ssh-copy-id root@pbs-node1
+ssh-copy-id root@pbs-node2
+
+
+on all 3 machine
+
+yum install git -y
+git clone https://github.com/openpbs/openpbs.git
+
+yum groupinstall "Development Tools"
+yum --setopt=group_package_types=mandatory,default,optional groupinstall "Development Tools"
+yum group list
+mv openpbs/ openpbs-23.06.06
+cd openpbs-23.06.06/
+rpmbuild -ba openpbs.spec
+cd
+tar -cvf /root/rpmbuild/SOURCES/openpbs-23.06.06.tar.gz openpbs-23.06.06/
+cd openpbs-23.06.06/
+ll
+yum install libtool-ltdl-devel hwloc-devel libXt-devel libedit-devel libical-devel ncurses-devel postgresql-devel postgresql-contrib python3-devel  tcl-devel tk-devel zlib-devel expat-devel openssl-devel  -y
+rpmbuild -ba openpbs.spec
+cd /root/rpmbuild/RPMS/x86_64/
+ll
+yum install openpbs-server-23.06.06-0.x86_64.rpm -y
+chmod 4755 /opt/pbs/sbin/pbs_iff /opt/pbs/sbin/pbs_rcp
+systemctl start pbs
+systemctl status pbs
+systemctl enable pbs
+
+vi /etc/pbs.conf 
+cat /etc/pbs.conf 
+PBS_EXEC=/opt/pbs
+PBS_SERVER=pbs-master
+PBS_START_SERVER=1
+PBS_START_SCHED=1
+PBS_START_COMM=1
+PBS_START_MOM=0
+PBS_HOME=/var/spool/pbs
+PBS_CORE_LIMIT=unlimited
+PBS_SCP=/bin/scp
+
+/etc/init.d/pbs status
+. /etc/profile.d/pbs.sh
+which qstat
+qstat -B
+
+on node1----------------
+
+cd openpbs/
+ls
+./autogen.sh
+
+If you not get this file 
+#yum provides */autoconf
+yum install autoconf automake libtool
+mkdir /opt/pbs/
+yum install openssl-devel libXt-devel
+./configure -prefix=/opt/pbs
+		configure: error: Database headers not found.--------
+yum install libtool-ltdl-devel hwloc-devel libXt-devel libedit-devel libical-devel ncurses-devel postgresql-devel postgresql-contrib python3-devel tcl-devel tk-devel zlib-devel expat-devel openssl-devel –y
+
+./configure -prefix=/opt/pbs   ---->> run again
+		config.status: executing patch-libtool commands
+config.status: patching libtool to support -fsanitize
+
+make
+make install
+. /opt/pbs/etc/pbs.sh
+ll /opt/pbs/
+chmod  +x /opt/pbs/etc/pbs.sh
+bash /opt/pbs/etc/pbs.sh
+export PATH=${PATH}:/opt/pbs/bin
+
+Go to --- pbs-master----- 
+
+scp /etc/pbs.conf pbs-node1:/etc/pbs.conf
+
+now goto node1----------------
+Again come to pbs-node1
+
+vim /etc/pbs.conf
+PBS_EXEC=/opt/pbs
+PBS_SERVER=master
+PBS_START_SERVER=0
+PBS_START_SCHED=0
+PBS_START_COMM=0
+PBS_START_MOM=1
+PBS_HOME=/var/spool/pbs
+PBS_CORE_LIMIT=unlimited
+PBS_SCP=/bin/scp
+
+systemctl start pbs
+systemctl enable pbs
+systemctl status pbs
+qstat -B
+
+-----------STEP-22 GO TO MASTER AND RUN THE FOLLOWING CMD------
+cd
+cd /root/rpmbuild/RPMS/x86_64/
+ls
+systemctl restart nfs-server.service
+systemctl enable nfs-server.service
+chmod 777 /home/
+vim /etc/exports
+/home/ 192.168.15.154 (rw,sync,no_root_squash)      node2 ip
+exportfs -avr
+mkdir /home/rpms
+cp * /home/rpms/
+ll * /home/rpms/ 
+
+GO TP PBS-NODE2
+STEP-23  yum install –y nfs-utils -y
+systemctl start nfs
+systemctl enable nfs
+mount -t nfs pbs-master:/home/ /home/
+df -Th
+cd /home/rpms/
+yum install openpbs-execution-23.06.06-0.x86_64.rpm
+
+vim /etc/pbs.conf 
+[root@pbs-node2 rpms]# cat /etc/pbs.conf 
+PBS_EXEC=/opt/pbs
+PBS_SERVER=pbs-master
+PBS_START_SERVER=0
+PBS_START_SCHED=0
+PBS_START_COMM=0
+PBS_START_MOM=1
+PBS_HOME=/var/spool/pbs
+PBS_CORE_LIMIT=unlimited
+PBS_SCP=/bin/scp
+
+systemctl restart pbs
+systemctl enable pbs
+systemctl status pbs
+
+run both node1 and node2--------
+
+vim /var/spool/pbs/mom_priv/config 
+[root@pbs-node2 rpms]# cat /var/spool/pbs/mom_priv/config 
+$logevent 0x1ff
+#$clientname pbs-node2
+
+$restrict_user_maxsysid 999
+
+on master machine
+[root@pbs-master x86_64]# vim /var/spool/pbs/server_priv/nodes
+[root@pbs-master x86_64]# cat /var/spool/pbs/server_priv/nodes
+pbs-node1 np=1
+pbs-node2 np=1
+
+[root@pbs-master x86_64]# cd
+[root@pbs-master ~]# qmgr
+Max open servers: 49
+Qmgr: create node pbs-node1
+Qmgr: create node pbs-node2
+Qmgr: exit
+[root@pbs-master ~]# pbsnodes -a
+pbs-node1
+     Mom = pbs-node1
+     Port = 15002
+     pbs_version = 23.06.06
+     ntype = PBS
+     state = free
+     pcpus = 2
+     resources_available.arch = linux
+     resources_available.host = pbs-node1
+     resources_available.mem = 3861288kb
+     resources_available.ncpus = 2
+     resources_available.vnode = pbs-node1
+     resources_assigned.accelerator_memory = 0kb
+     resources_assigned.hbmem = 0kb
+     resources_assigned.mem = 0kb
+     resources_assigned.naccelerators = 0
+     resources_assigned.ncpus = 0
+     resources_assigned.vmem = 0kb
+     resv_enable = True
+     sharing = default_shared
+     license = l
+     last_state_change_time = Fri Jul 28 04:23:44 2023
+
+pbs-node2
+     Mom = pbs-node2
+     Port = 15002
+     pbs_version = 23.06.06
+     ntype = PBS
+     state = free
+     pcpus = 2
+     resources_available.arch = linux
+     resources_available.host = pbs-node2
+     resources_available.mem = 3861296kb
+     resources_available.ncpus = 2
+     resources_available.vnode = pbs-node2
+     resources_assigned.accelerator_memory = 0kb
+     resources_assigned.hbmem = 0kb
+     resources_assigned.mem = 0kb
+     resources_assigned.naccelerators = 0
+     resources_assigned.ncpus = 0
+     resources_assigned.vmem = 0kb
+     resv_enable = True
+     sharing = default_shared
+     license = l
+     last_state_change_time = Fri Jul 28 04:23:46 2023
+
+[root@pbs-master ~]# 
+
+
+
+
+
+
+
+
+
+

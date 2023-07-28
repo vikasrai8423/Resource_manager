@@ -1,0 +1,289 @@
+master ip -->> 192.168.113.160(NAT)
+				10.10.10.146(HOST)
+				
+node1 ip -->> 192.168.113.161(NAT)
+				10.10.10.147(HOST)
+				
+node2 ip -->> 192.168.113.162(NAT)
+				10.10.10.148(HOST)
+				
+
+run all 3 VM machine
+
+systemctl status firewalld
+systemctl stop firewalld
+systemctl disable firewalld
+systemctl status firewalld
+
+setenforce 0
+getenforce
+
+yum install -y nfs-utils
+
+systemctl start nfs-server rpcbind
+systemctl enable nfs-server rpcbind
+
+ssh-keygen
+ssh-copy-id root@node1
+ssh-copy-id root@node2
+
+on master only
+mkdir /home
+chmod 777 /home/
+vi /etc/exports
+/home *(rw,sync,no_root_squash)
+exportfs -avr
+
+on node1 and node2
+mount -t nfs master:/home /home/
+df -Th
+
+on all 3 VM machine
+
+update host files
+yum install epel-release -y
+yum install munge munge-libs munge-devel -y
+
+on master
+rpm -qa | grep munge
+/usr/sbin/create-munge-key -r
+ll /etc/munge/
+scp /etc/munge/munge.key node1:/etc/munge/
+scp /etc/munge/munge.key node2:/etc/munge/
+
+on all node1 and node2
+chown munge:munge /etc/munge/munge.key
+
+on all three machine
+systemctl start munge
+systemctl enable munge
+systemctl status munge
+
+on master
+
+wget https://download.schedmd.com/slurm/slurm-20.11.9.tar.bz2
+
+yum install rpm-build -y
+
+[root@master ~]# rpmbuild -ta slurm-20.11.9.tar.bz2 
+error: Failed build dependencies:
+	python3 is needed by slurm-20.11.9-1.el7.x86_64
+	readline-devel is needed by slurm-20.11.9-1.el7.x86_64
+	perl(ExtUtils::MakeMaker) is needed by slurm-20.11.9-1.el7.x86_64
+	pam-devel is needed by slurm-20.11.9-1.el7.x86_64
+	
+run all 3 machine
+yum install python3 readline-devel perl-ExtUtils-MakeMaker pam-devel gcc mysql-devel -y
+
+then run cmd on master
+rpmbuild -ta slurm-20.11.9.tar.bz2 
+
+on all 3 machine
+export SLURMUSER=900
+groupadd -g $SLURMUSER slurm
+useradd -m -c "SLURM workload manager" -d /var/lib/slurm -u $SLURMUSER -g slurm -s /bin/bash slurm
+
+ON MASTER
+mkdir /home/rpms
+cd /root/rpmbuild/RPMS/x86_64/
+cp * /home/rpms/
+
+
+on all 3 machine
+
+cd /home/rpms/
+yum --nogpgcheck localinstall * -y
+
+TO check packages on all nodes no will be 12
+
+rpm -qa | grep slurm | wc -l
+
+on all 3 machine
+
+mkdir /var/spool/slurm
+chown slurm:slurm /var/spool/slurm
+chmod 755 /var/spool/slurm/
+
+mkdir /var/log/slurm
+chown slurm:slurm /var/log/slurm
+chmod 755 /var/log/slurm/
+chown -R slurm . /var/log/slurm/
+
+on all nodes
+slurmd -C
+then copy in master slurm.conf
+
+on master
+touch /var/log/slurm/slurmctld.log
+chown slurm:slurm /var/log/slurm/slurmctld.log
+touch /var/log/slurm_jobacct.log /var/log/slurm_jobcomp.log
+chown slurm: /var/log/slurm_jobacct.log /var/log/slurm_jobcomp.log
+cp /etc/slurm/slurm.conf.example /etc/slurm/slurm.conf
+vi /etc/slurm/slurm.conf
+ControlMachine=master
+in last line
+# COMPUTE NODES
+#NodeName=linux[1-32] Procs=1 State=UNKNOWN
+NodeName=node1 CPUs=1 Boards=1 SocketsPerBoard=1 CoresPerSocket=1 ThreadsPerCore=1 RealMemory=3770 State=UNKNOWN
+NodeName=node2 CPUs=1 Boards=1 SocketsPerBoard=1 CoresPerSocket=1 ThreadsPerCore=1 RealMemory=3770 State=UNKNOWN
+PartitionName=debug Nodes=ALL Default=YES MaxTime=INFINITE State=UP
+
+scp /etc/slurm/slurm.conf node1:/etc/slurm/
+scp /etc/slurm/slurm.conf node2:/etc/slurm/
+systemctl start slurmctld
+systemctl enable slurmctld
+systemctl status slurmctld
+
+
+---create reservation--------------------------------------------------------------------------------
+
+scontrol create reservation starttime=2023-07-27T22:00:00 duration=120 user=root nodes=ALL
+scontrol show res
+
+install mariadb
+yum install mariadb-server mariadb-devel -y
+systemctl start mariadb
+systemctl enable mariadb
+systemctl status mariadb
+
+[root@master ~]# mysql
+Welcome to the MariaDB monitor.  Commands end with ; or \g.
+Your MariaDB connection id is 7
+Server version: 5.5.68-MariaDB MariaDB Server
+
+Copyright (c) 2000, 2018, Oracle, MariaDB Corporation Ab and others.
+
+Type 'help;' or '\h' for help. Type '\c' to clear the current input statement.
+
+MariaDB [(none)]> GRANT ALL ON slurm_acct_db.* TO 'slurm'@'localhost' IDENTIFIED BY '1234' with grant option;
+Query OK, 0 rows affected (0.00 sec)
+
+MariaDB [(none)]> SHOW VARIABLES LIKE 'have_innodb';
++---------------+-------+
+| Variable_name | Value |
++---------------+-------+
+| have_innodb   | YES   |
++---------------+-------+
+1 row in set (0.00 sec)
+
+MariaDB [(none)]> FLUSH PRIVILEGES;
+Query OK, 0 rows affected (0.01 sec)
+
+MariaDB [(none)]> CREATE DATABASE slurm_acct_db;
+Query OK, 1 row affected (0.00 sec)
+MariaDB [(none)]> quit;
+Bye
+[root@master ~]# mysql -p -u slurm
+Enter password: 
+Welcome to the MariaDB monitor.  Commands end with ; or \g.
+Your MariaDB connection id is 8
+Server version: 5.5.68-MariaDB MariaDB Server
+
+Copyright (c) 2000, 2018, Oracle, MariaDB Corporation Ab and others.
+
+Type 'help;' or '\h' for help. Type '\c' to clear the current input statement.
+
+MariaDB [(none)]> show grants;
++--------------------------------------------------------------------------------------------------------------+
+| Grants for slurm@localhost                                                                                   |
++--------------------------------------------------------------------------------------------------------------+
+| GRANT USAGE ON *.* TO 'slurm'@'localhost' IDENTIFIED BY PASSWORD '*A4B6157319038724E3560894F7F932C8886EBFCF' |
+| GRANT ALL PRIVILEGES ON `slurm_acct_db`.* TO 'slurm'@'localhost' WITH GRANT OPTION                           |
++--------------------------------------------------------------------------------------------------------------+
+2 rows in set (0.00 sec)
+
+MariaDB [(none)]> quit;
+Bye
+[root@master ~]# vim /etc/my.cnf.d/innodb.cnf
+[root@master ~]# cat /etc/my.cnf.d/innodb.cnf
+[mysqld]
+innodb_buffer_pool_size=1024M
+innodb_log_file_size=64M
+innodb_lock_wait_timeout=900
+[root@master ~]# systemctl stop mariadb
+[root@master ~]# mv /var/lib/mysql/ib_logfile? /tmp/
+[root@master ~]# systemctl start mariadb
+[root@master ~]# mysql
+Welcome to the MariaDB monitor.  Commands end with ; or \g.
+Your MariaDB connection id is 2
+Server version: 5.5.68-MariaDB MariaDB Server
+
+Copyright (c) 2000, 2018, Oracle, MariaDB Corporation Ab and others.
+
+Type 'help;' or '\h' for help. Type '\c' to clear the current input statement.
+
+MariaDB [(none)]> SHOW VARIABLES LIKE 'innodb_buffer_pool_size';
++-------------------------+------------+
+| Variable_name           | Value      |
++-------------------------+------------+
+| innodb_buffer_pool_size | 1073741824 |
++-------------------------+------------+
+1 row in set (0.00 sec)
+
+MariaDB [(none)]> quit;
+Bye
+[root@master ~]# vim /etc/slurm/slurmdbd.conf
+[root@master ~]# cd /etc/slurm/
+[root@master slurm]# ls
+cgroup.conf.example     job_submit.lua.example  slurm.conf          slurmdbd.conf.example
+cli_filter.lua.example  prolog.example          slurm.conf.example
+[root@master slurm]# vim slurmdbd.conf.example 
+[root@master slurm]# cd
+[root@master ~]# vim /etc/slurm/slurmdbd.conf
+[root@master ~]# cat /etc/slurm/slurmdbd.conf
+#
+# Example slurmdbd.conf file.
+#
+# See the slurmdbd.conf man page for more information.
+#
+# Archive info
+#ArchiveJobs=yes
+#ArchiveDir="/tmp"
+#ArchiveSteps=yes
+#ArchiveScript=
+#JobPurge=12
+#StepPurge=1
+#
+# Authentication info
+AuthType=auth/munge
+#AuthInfo=/var/run/munge/munge.socket.2
+#
+# slurmDBD info
+DbdAddr=localhost
+DbdHost=localhost
+#DbdPort=7031
+SlurmUser=slurm
+#MessageTimeout=300
+DebugLevel=verbose
+#DefaultQOS=normal,standby
+LogFile=/var/log/slurm/slurmdbd.log
+PidFile=/var/run/slurmdbd.pid
+#PluginDir=/usr/lib/slurm
+#PrivateData=accounts,users,usage,jobs
+#TrackWCKey=yes
+#
+# Database info
+StorageType=accounting_storage/mysql
+#StorageHost=localhost
+#StoragePort=1234
+StoragePass=1234
+StorageUser=slurm
+StorageLoc=slurm_acct_db
+
+[root@master ~]# chown slurm: /etc/slurm/slurmdbd.conf
+[root@master ~]# chmod 600 /etc/slurm/slurmdbd.conf
+[root@master ~]# touch /var/log/slurmdbd.log
+[root@master ~]# chown slurm: /var/log/slurmdbd.log
+[root@master ~]# slurmdbd -D -vvv
+ [root@master ~]# systemctl start slurmdbd
+[root@master ~]# systemctl enable slurmdbd
+Created symlink from /etc/systemd/system/multi-user.target.wants/slurmdbd.service to /usr/lib/systemd/system/slurmdbd.service.
+[root@master ~]# systemctl status slurmdbd
+slurmdbd.service - Slurm DBD accounting daemon
+   Loaded: loaded (/usr/lib/systemd/system/slurmdbd.service; enabled; vendor preset: disabled)
+   Active: active (running) since Thu 2023-07-27 20:03:46 IST; 16s ago
+ Main PID: 53561 (slurmdbd)
+   CGroup: /system.slice/slurmdbd.service
+           └─53561 /usr/sbin/slurmdbd -D
+
+Jul 27 20:03:46 master systemd[1]: Started Slurm DBD accounting daemon.
